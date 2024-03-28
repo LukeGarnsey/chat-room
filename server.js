@@ -24,15 +24,73 @@ const UsersState = {
 
 const io = new Server(expressServer, {
   cors:{
-    origin: process.env.NODE_ENV === "production"?false:['http://localhost:5500', 'http://127.0.0.1:5500']
+    origin: process.env.NODE_ENV === "production"?false:['http://localhost:3001', 'http://127.0.0.1:3001']
   }
 });
 
 io.on('connection', socket =>{
-  socket.emit('message', "Welcome to Chat Rooms App");
+  console.log(`User ${socket.id} connect`);
 
-  socket.broadcast.emit('message', `User ${socket.id.substring(0, 5)}: connected}`);
-  socket.on('message', `User ${socket.id.substring(0, 5)}: ${data}`);
+  socket.emit('message', buildMsg(ADMIN, "Welcome to Chat Rooms App"));
+
+  socket.on('enterRoom', ({name, room}) =>{
+    //leave room if user was in a room
+    const prevRoom = getUser(socket.id)?.room;
+    if(prevRoom){
+      socket.leave(prevRoom);
+      io.to(prevRoom).emit('message', buildMsg(ADMIN, `${name} has left the room`));
+    }
+    const user = activateUser(socket.id, name, room);
+    //Cannot update previous room users list until after the state update in activate user.
+
+    if(prevRoom){
+      io.to(prevRoom).emit('userlist', {
+        users:getUsersInRoom(prevRoom)
+      })
+    }
+
+    socket.join(user.room);
+
+    socket.emit('message', buildMsg(ADMIN, `You have joined the ${user.room} chat room.`))
+    //to everyone else
+    socket.broadcast.to(user.room).emit('message', buildMsg(ADMIN, `${user.name} has joined the room`))
+
+    //update user list form room
+    io.to(user.room).emit('userList', {
+      users: getUsersInRoom(user.room)
+    });    
+    io.emit('roomsList', {
+      rooms: getAllActiveRooms()
+    });
+  });
+
+  socket.on('disconnect', ()=>{
+    const user = getUser(socket.id);
+    userLeavesApp(socket.id);
+
+    if(user){
+      io.to(user.room).emit('message', buildMsg(ADMIN,`${user.name} has left the room`));
+      io.to(user.room).emit('userList',{
+        users:getUsersInRoom(user.room)
+      });
+      io.emit('roomList', {
+        rooms:getAllActiveRooms()
+      })
+    }
+    console.log(`User ${socket.id} disconnect`);
+  });
+  socket.on('message', ({name, text}) =>{
+    const room = getUser(socket.id)?.room;
+    if(room){
+      io.to(room).emit('message', buildMsg(name, text)); 
+    }
+  });
+  socket.on('activity', ({name})=>{
+    const room = getUser(socket.id)?.room;
+    if(room){
+      socket.broadcast.to(room).emit('activity', name);
+    }
+  });
 });
 
 function buildMsg(name, text){
